@@ -1,0 +1,121 @@
+---
+title: "FM9593Final_Draft"
+author: "Kangchen Sun"
+date: "06/04/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(mosaic)
+library(fImport)
+library(BatchGetSymbols)
+library(dplyr)
+
+tickers <- c('AAPL','AMZN','SPY')
+
+first.date <- Sys.Date()-5200
+last.date <- Sys.Date()
+freq.data <- 'daily'
+l.out <- BatchGetSymbols(tickers = tickers, 
+                         first.date = first.date,
+                         last.date = last.date, 
+                         freq.data = freq.data,
+                         cache.folder = file.path(tempdir(), 
+                                                  'BGS_Cache')
+)
+
+computereturns <- function(l.out, stocks) {
+  df <- select(l.out$df.tickers, price.close,ticker, ref.date)
+  closingprice <- subset(df, ticker == stocks[1])
+  mycolname <- closingprice$ticker[1]
+  mycolname <- paste0(mycolname, ".PctReturn")
+  N <- nrow(closingprice)
+  myrownames <- closingprice$ref.date[1:(N-1)]
+  closingprice <- select(closingprice, price.close)
+  financial.data <- as.data.frame(closingprice[2:N,]/closingprice[1:(N-1),] - 1)
+  colnames(financial.data) = mycolname
+  rownames(financial.data) = myrownames
+  na.omit(financial.data)
+  
+  num = length(stocks)
+  for (i in 2:num){
+    closingprice <- subset(df, ticker == stocks[i])
+    mycolname <- closingprice$ticker[1]
+    mycolname <- paste0(mycolname, ".PctReturn")
+    N <- nrow(closingprice)
+    myrownames <- closingprice$ref.date[1:(N-1)]
+    closingprice <- select(closingprice, price.close)
+    percentreturn <- as.data.frame(closingprice[2:N,]/closingprice[1:(N-1),] - 1)
+    colnames(percentreturn) = mycolname
+    rownames(percentreturn) = myrownames
+    na.omit(percentreturn)
+    financial.data <- cbind(financial.data,percentreturn)
+  }
+  return(financial.data)
+  
+}
+
+
+financial.data <- computereturns(l.out,tickers)
+pairs(financial.data)
+
+
+#loop 20 trading days
+totalwealth = 1000000
+horizon = 22
+weights = c(0.4,0.3,0.3)
+holdings = weights * totalwealth
+wealthtracker = rep(0,horizon)
+for(today in 1:horizon){
+  return.today = resample(financial.data,1,orig.ids=FALSE)
+  holdings = holdings+holdings*return.today
+  totalwealth = sum(holdings)
+  wealthtracker[today] = totalwealth
+}
+totalwealth
+plot(wealthtracker)
+
+
+hunky <- function(financial.data, horizon = 22){
+    totalwealth = 1000000
+    weights = c(0.4,0.3,0.3)
+    holdings = weights*totalwealth
+    for(today in 1:horizon){
+      return.today = resample(financial.data,1,orig.ids=FALSE)
+      holdings = holdings+holdings*return.today
+      totalwealth = sum(holdings)
+    }
+    totalwealth
+    }
+
+simulation = replicate(1000,hunky(financial.data))
+
+#Graph
+hist(simulation)
+
+#VAR
+profit = simulation - 1000000
+hist(profit)
+
+#1% quantile of the profit-loss distribution
+qdata(profit, 0.01)
+var01 = qdata(profit, 0.01)
+abline(v = var01, col='red',lwd = 4)
+abline(v = mean(profit), col = 'blue', lwd = 3)
+
+#Confidence Interval for our VaR Model
+vars <- do(100)*{
+  var1 <- qdata(replicate(1000,hunky(financial.data))-1000000, 0.01)
+  var1
+}
+
+var.bar <- sum(vars)/100
+s.var <- sqrt(sum((vars-var.bar)^2)/99)
+cis <- var.bar+c(-1.96*s.var,1.96*s.var)
+cis
+```
+

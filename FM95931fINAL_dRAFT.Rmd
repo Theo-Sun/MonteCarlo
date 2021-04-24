@@ -61,9 +61,28 @@ computereturns <- function(l.out, stocks) {
 
 
 financial.data <- computereturns(l.out,tickers)
+
+```
+
+########Delores added
+Exploratory data 
+```{r}
 pairs(financial.data)
 
+# plot each stock directly + daily returns
 
+
+
+# acf plot
+
+
+# ecdf plot
+
+```
+
+
+
+```{r}
 #loop 20 trading days
 totalwealth = 1000000
 horizon = 22
@@ -97,6 +116,12 @@ simulation = replicate(1000,hunky(financial.data))
 #Graph
 hist(simulation)
 
+###### Delores Added
+# add mean of simulation + standard deviation
+mean(simulation)
+sd(simulation)
+
+
 #VAR
 profit = simulation - 1000000
 hist(profit)
@@ -117,5 +142,12 @@ var.bar <- sum(vars)/100
 s.var <- sqrt(sum((vars-var.bar)^2)/99)
 cis <- var.bar+c(-1.96*s.var,1.96*s.var)
 cis
+```
+
+Compare with Monte Carlo VaR
+
+```{r}
+
+
 ```
 

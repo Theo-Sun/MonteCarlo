@@ -1,0 +1,318 @@
+---
+title: "FM9593Final_Draft"
+author: "Kangchen Sun"
+date: "06/04/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(mosaic)
+library(fImport)
+library(BatchGetSymbols)
+library(dplyr)
+
+tickers <- c('AAPL','AMZN','SPY')
+
+first.date <- Sys.Date()-5200
+last.date <- Sys.Date()
+freq.data <- 'daily'
+l.out <- BatchGetSymbols(tickers = tickers, 
+                         first.date = first.date,
+                         last.date = last.date, 
+                         freq.data = freq.data,
+                         cache.folder = file.path(tempdir(), 
+                                                  'BGS_Cache')
+)
+
+computereturns <- function(l.out, stocks) {
+  df <- select(l.out$df.tickers, price.close,ticker, ref.date)
+  closingprice <- subset(df, ticker == stocks[1])
+  mycolname <- closingprice$ticker[1]
+  mycolname <- paste0(mycolname, ".LogReturn")
+  N <- nrow(closingprice)
+  myrownames <- closingprice$ref.date[1:(N-1)]
+  closingprice <- select(closingprice, price.close)
+  financial.data <- as.data.frame(closingprice[2:N,]/closingprice[1:(N-1),] - 1)
+  colnames(financial.data) = mycolname
+  rownames(financial.data) = myrownames
+  na.omit(financial.data)
+  
+  num = length(stocks)
+  for (i in 2:num){
+    closingprice <- subset(df, ticker == stocks[i])
+    mycolname <- closingprice$ticker[1]
+    mycolname <- paste0(mycolname, ".LogReturn")
+    N <- nrow(closingprice)
+    myrownames <- closingprice$ref.date[1:(N-1)]
+    closingprice <- select(closingprice, price.close)
+    logreturn <- as.data.frame(log(closingprice[2:N,]/closingprice[1:(N-1),], base = exp(1)))
+    colnames(logreturn) = mycolname
+    rownames(logreturn) = myrownames
+    na.omit(logreturn)
+    financial.data <- cbind(financial.data,logreturn)
+  }
+  return(financial.data)
+  
+}
+
+
+financial.data <- computereturns(l.out,tickers)
+financial.data <- na.omit(financial.data)
+
+```
+
+
+Exploratory data 
+```{r}
+# visualize time series trend of three stocks
+p <- ggplot(l.out$df.tickers, aes(x = ref.date, y = price.close, color = ticker))
+p <-  p + geom_line() + ggtitle("Close price of stocks") + theme(plot.title = element_text(hjust = 0.5))
+print(p)
+# plot each stock directly + daily returns
+
+# plot returns over time
+plot(financial.data[,1], type = 'l', main = "Apple Daily Returns", ylab = "Daily Returns")
+plot(financial.data[,2], type = 'l', main = "Amazon Daily Returns", ylab = "Daily Returns")
+plot(financial.data[,3], type = 'l', main = "S&P 500 Daily Returns", ylab = "Daily Returns")
+
+# acf plot
+plot(acf(financial.data[,1],lag = 10), main = "Apple: autocorrelation of log returns")
+plot(acf(financial.data[,2],lag = 10), main = "Amazon: autocorrelation of log returns")
+plot(acf(financial.data[,3],lag = 10), main = "S&P 500 ETF: autocorrelation of log returns")
+#acf of log returns are not showing serial correlation for most of lags
+
+# output the variance covariance matrix
+cov(financial.data)
+pairs(financial.data)
+
+```
+
+
+
+```{r}
+#loop T horizon trading days, we choose 1 
+horizon = 1
+weights = c(0.4,0.3,0.3)
+total.logreturn = NULL
+
+
+hunky <- function(financial.data, horizon = 1){
+    weights = c(0.4,0.3,0.3)
+    for(today in 1:horizon){
+      return.today = resample(financial.data,1,orig.ids=FALSE)
+
+      total.logreturn = sum(return.today*weights)
+    }
+    total.logreturn
+    }
+
+
+#Bootstrapping VaR and Bootstrapping Confidence Interval for our VaR Model
+vars <- do(3000)*{
+  var1 <- qdata(replicate(1000,hunky(financial.data)), c(0.01,0.05))
+  var1
+}
+
+var.bar <- c(sum(vars[,1])/3000, sum(vars[,2])/3000)
+s.var <- c(sqrt(sum((vars[,1]-var.bar[1])^2)/2999),sqrt(sum((vars[,2]-var.bar[2])^2)/2999))
+cis.1 <- var.bar[1]+c(-1.96*s.var[1],1.96*s.var[1])
+cis.2 <- var.bar[2]+c(-1.96*s.var[2],1.96*s.var[2])
+# Estimated VaR
+var.bar
+#CI for 99% VaR
+cis.1
+# CI for 95% VaR
+cis.2
+
+```
+
+
+# Compare with Monte Carlo VaR
+
+```{r}
+library(rugarch)
+spec<-ugarchspec(mean.model=list(armaOrder=c(0,0)), variance.model=list(garchOrder=c(1,1)),distribution.model='std')
+
+fit1<-ugarchfit(data=financial.data[,1], spec=spec)
+show(fit1)
+```
+
+```{r}
+
+fit2<-ugarchfit(data=financial.data[,2], spec=spec)
+show(fit2)
+```
+
+
+```{r}
+fit3<-ugarchfit(data=financial.data[,3], spec=spec)
+show(fit3)
+```
+
+
+```{r}
+#record the optimal parameters for forecasting 
+mu1 = 0.001664
+alpha1 = c(0.000008,0.103485 )
+beta1 = 0.883669 
+df1 = 4.856111
+sig1 = sigma (fit1)
+
+mu2 = 0.001283
+alpha2 = c(0.000010,0.076175 )
+beta2 =  0.910747 
+df2 = 3.852553
+sig2 = sigma (fit2)
+
+mu3 = 0.000925
+alpha3 = c(0.000002 ,0.159859 )
+beta3 =  0.839140 
+df3 = 5.071660
+sig3 = sigma (fit3)
+```
+
+
+### Simulation
+```{r}
+library(fGarch)
+#Set time horizon date 1 day
+t<-1
+nround<- 50000
+
+#Set see for reproduce
+set.seed(250846753)
+
+#Use Student t-distribution to generate random numbers
+err1<-matrix(rstd(t*nround,mean=0,sd=1,nu=df1), t, nround)
+err2<-matrix(rstd(t*nround,mean=0,sd=1,nu=df2), t, nround)
+err3<-matrix(rstd(t*nround,mean=0,sd=1,nu=df3), t, nround)
+```
+
+
+
+
+
+
+
+```{r}
+#Initialize starting point the newest date of current stock date
+xt = NULL
+init<-c(financial.data[3583,1],sig1[3583,1])
+init2<-c(financial.data[3583,1],sig2[3583,1])
+init3<-c(financial.data[3583,1],sig3[3583,1])
+for (j in 1:nround){
+  #Initialize error residual and loss
+    lt<-NULL
+    lt2<-NULL
+    lt3<-NULL
+    at<-init[1]-mu1
+    at2<-init2[1]-mu2
+    at3<-init3[1]-mu3
+    vart<-init[2]^2
+    vart2<-init2[2]^2
+    vart3<-init3[2]^2
+    for (i in 1:t){
+        var<-alpha1[1]+alpha1[2]*at[i]^2+beta1*vart[i]# Based on GARCH to estimate 
+        var2<-alpha2[1]+alpha2[2]*at2[i]^2+beta2*vart2[i]
+        var3<-alpha3[1]+alpha3[2]*at3[i]^2+beta3*vart3[i]
+        
+        vart<-c(vart,var)
+        vart2<-c(vart2,var2)
+        vart3<-c(vart3,var3)
+        
+        at<-c(at,sqrt(var)*err1[i,j])
+        at2<-c(at2,sqrt(var2)*err2[i,j])
+        at3<-c(at3,sqrt(var3)*err3[i,j])
+        
+        lt<-c(lt, mu1+at[i+1])
+        lt2<-c(lt2, mu2+at2[i+1])
+        lt3<-c(lt3, mu3+at3[i+1])
+    }
+    xt<-c(xt,0.4*sum(lt)+0.3*sum(lt3)+0.3*sum(lt2))
+}
+
+```
+
+```{r}
+VaR2<-c(quantile(xt,0.01), quantile(xt, 0.05))
+VaR2
+```
+# Test Bootstrapping 
+```{r}
+# Assuming Independent with each other
+bs.log <- as.ts(0.4*financial.data[,1]+0.3*financial.data[,2]+0.3*financial.data[,3])
+
+V1 = (lag(bs.log,1) <= var.bar[1])
+V2 = (lag(bs.log,1) <= var.bar[2])
+T1  = sum(V1)
+T2 = sum(V2)
+
+TT1 = length(V1)
+TT2 = length(V2)
+
+alphahat1 = mean(T1/length(V1))
+alphahat2 = mean(T2/length(V2))
+#TOTAL DAYS
+TT1
+#Violation days of 0.99 VaR
+T1
+# Failure Rate of 0.99 VaR
+alphahat1
+#Violation days of 0.95 VaR
+T2
+# Failure Rate of 0.95 VaR
+alphahat2
+```
+```{r}
+UC1  = -2 * ( T1 * (log(0.01/alphahat1)) 
+             + (TT1 - T1) * log(0.99/(1-alphahat1))) 
+UC2  = -2 * ( T2 * (log(0.05/alphahat2)) 
+             + (TT2 - T2) * log(0.95/(1-alphahat2))) 
+UC1
+UC2
+```
+
+
+# Test Monte Carlo
+
+```{r}
+
+
+bs.log <- as.ts(0.4*financial.data[,1]+0.3*financial.data[,2]+0.3*financial.data[,3])
+V1 = (lag(bs.log,1) <= VaR2[1])
+V2 = (lag(bs.log,1) <= VaR2[2])
+T1  = sum(V1)
+T2 = sum(V2)
+
+TT1 = length(V1)
+TT2 = length(V2)
+
+alphahat1 = mean(T1/length(V1))
+alphahat2 = mean(T2/length(V2))
+#TOTAL DAYS
+TT1
+#Violation days of 0.99 VaR
+T1
+# Failure Rate of 0.99 VaR
+alphahat1
+#Violation days of 0.95 VaR
+T2
+# Failure Rate of 0.95 VaR
+alphahat2
+```
+```{r}
+UC1  = -2 * ( T1 * (log(0.01/alphahat1)) 
+             + (TT1 - T1) * log(0.99/(1-alphahat1))) 
+UC2  = -2 * ( T2 * (log(0.05/alphahat2)) 
+             + (TT2 - T2) * log(0.95/(1-alphahat2))) 
+UC1
+UC2
+```
+
+
+
+
